@@ -13,7 +13,7 @@
  * 
  */
 
-using CERTCLILib;
+using CERTCLIENTLib;
 using CERTENROLLLib;
 using System;
 using System.Collections.Generic;

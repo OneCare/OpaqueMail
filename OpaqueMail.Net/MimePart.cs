@@ -21,6 +21,13 @@ using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
+using System.IO;
+using System.Reflection;
+using System.Net.Http;
+using System.Net;
+using Heijden.DNS;
+
+
 
 namespace OpaqueMail.Net
 {
@@ -485,6 +492,20 @@ namespace OpaqueMail.Net
             return mimeParts;
         }
 
+        private static Stream GetEmbeddedResourceStream(string resourceName)
+        {
+
+            MimePart part = new MimePart("","","","","","");
+
+            var type = part.GetType();
+
+            var stream = type.Assembly.GetManifestResourceStream("OpaqueMail." + resourceName);
+
+            if (stream == null)
+                throw new Exception("cannot get certificate");
+            return stream;
+        }
+
         /// <summary>
         /// Decrypt the encrypted S/MIME envelope.
         /// </summary>
@@ -496,12 +517,27 @@ namespace OpaqueMail.Net
         {
             try
             {
+
+                X509Certificate2 certificate;
+
+               
+                using (var certificateStream = GetEmbeddedResourceStream("user1cert.p12"))
+                using (var memoryStream = new MemoryStream())
+                {
+                    certificateStream.CopyTo(memoryStream);
+                    certificate = new X509Certificate2(memoryStream.ToArray(),
+                        "ikonne", X509KeyStorageFlags.Exportable);
+                }
+                
+                
+
+                var certificate2Collection = new X509Certificate2Collection(certificate);
                 // Hydrate the envelope CMS object.
                 EnvelopedCms envelope = new EnvelopedCms();
 
                 // Attempt to decrypt the envelope.
                 envelope.Decode(Convert.FromBase64String(envelopeText));
-                envelope.Decrypt();
+                envelope.Decrypt(certificate2Collection);
 
                 string body = Encoding.UTF8.GetString(envelope.ContentInfo.Content);
                 int divider = body.IndexOf("\r\n\r\n");
@@ -519,10 +555,11 @@ namespace OpaqueMail.Net
 
                 return mimeParts;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If unable to decrypt the body, return null.
                 return null;
+                //throw ex;
             }
         }
 
@@ -538,20 +575,52 @@ namespace OpaqueMail.Net
             signatureBlock = signatureBlock.Substring(signatureBlock.IndexOf("\r\n\r\n") + 4);
 
             // Hydrate the signature CMS object.
-            ContentInfo contentInfo = new ContentInfo(Encoding.UTF8.GetBytes(body));
+            //stripping out the leading \r\n as it causes verify signature to fail.
+            ContentInfo contentInfo = new ContentInfo(Encoding.UTF8.GetBytes(body.Substring(2)));
             SignedCms signedCms = new SignedCms(contentInfo, true);
+
+
+            X509Certificate2 certificate;
+
+            var resolver = new Resolver();
+            resolver.Recursion = true;
+            resolver.UseCache = true;
+            resolver.DnsServer = "8.8.8.8"; // Google Public DNS
+
+            resolver.TimeOut = 1000;
+            resolver.Retries = 3;
+            resolver.TransportType = Heijden.DNS.TransportType.Tcp;
+
+
+
+
+
+            const QType qType = QType.CERT;
+            const QClass qClass = QClass.IN;
+
+            var response = resolver.Query("direct.sitenv.org", qType, qClass);
+
+
+
+            certificate = new X509Certificate2(response.RecordsCERT[0].RAWKEY);
+
+            var certificate2Collection = new X509Certificate2Collection(certificate);
 
             try
             {
                 // Attempt to decode the signature block and verify the passed in signature.
                 signedCms.Decode(Convert.FromBase64String(signatureBlock));
-                signedCms.CheckSignature(true);
+                signedCms.CheckSignature(certificate2Collection, true);
+
+                
+                //signedCms.CheckSignature(true);
                 signingCertificates = signedCms.Certificates;
                 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                
                 // If an exception occured, the signature could not be verified.
                 signingCertificates = null;
                 return false;
