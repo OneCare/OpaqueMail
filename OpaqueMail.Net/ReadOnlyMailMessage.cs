@@ -473,7 +473,7 @@ namespace OpaqueMail.Net
                     RawBody = body;
 
                 // Parse body into MIME parts.
-                List<MimePart> mimeParts = MimePart.ExtractMIMEParts(ContentType, CharSet, ContentTransferEncoding, body, ProcessingFlags);
+                List<MimePart> mimeParts = MimePart.ExtractMIMEParts(ContentType, CharSet, ContentTransferEncoding, body, ProcessingFlags, fromText);
 
                 // Process each MIME part.
                 if (mimeParts.Count > 0)

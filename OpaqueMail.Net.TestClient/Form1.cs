@@ -600,6 +600,97 @@ This is a test of the APPEND command.", new string[] { @"\Seen" }, DateTime.Now)
                 MessageBox.Show("SMTP send exception:\r\n\r\n" + ex.Message, "SMTP send exception", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
+
+        private async void button2_Click(object sender, EventArgs e)
+        {
+            X509Certificate2 signingCertificate = null;
+            if (SmtpSmimeSign.Checked || SmtpSmimeTripleWrap.Checked)
+            {
+                // If S/MIME signing the message, attempt to look up a certificate from the Windows certificate store matching the serial number specified.
+                if (SmtpSmimeSerialNumber.Text.Length < 1)
+                {
+                    MessageBox.Show("SMTP send exception:\r\n\r\nA signing certificate must be passed prior to signing.", "SMTP send exception", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    SmtpSmimeSerialNumber.Focus();
+                    return;
+                }
+
+                // Try first looking the certificate up by its serial number, falling back to finding it by its subject name.
+                signingCertificate = CertHelper.GetCertificateBySerialNumber(StoreLocation.CurrentUser, SmtpSmimeSerialNumber.Text);
+                if (signingCertificate == null)
+                    signingCertificate = CertHelper.GetCertificateBySerialNumber(StoreLocation.LocalMachine, SmtpSmimeSerialNumber.Text);
+                if (signingCertificate == null)
+                    signingCertificate = CertHelper.GetCertificateBySubjectName(StoreLocation.CurrentUser, SmtpSmimeSerialNumber.Text);
+                if (signingCertificate == null)
+                    signingCertificate = CertHelper.GetCertificateBySubjectName(StoreLocation.LocalMachine, SmtpSmimeSerialNumber.Text);
+
+                if (signingCertificate == null)
+                {
+                    MessageBox.Show("Certificate with serial # \"" + SmtpSmimeSerialNumber.Text + "\" not found.");
+                    SmtpSmimeSerialNumber.Focus();
+                    return;
+                }
+            }
+
+            try
+            {
+                int smtpPort = 25;
+                int.TryParse(SmtpPort.Text, out smtpPort);
+
+                SmtpClient smtpClient = new SmtpClient(SmtpHost.Text, smtpPort);
+                smtpClient.Credentials = new NetworkCredential(SmtpUsername.Text, SmtpPassword.Text);
+                smtpClient.EnableSsl = true;
+
+                MailMessage message = new MailMessage();
+                message.From = new MailAddress(SmtpFrom.Text);
+
+                // Parse all addresses provided into MailAddress objects.
+                if (SmtpTo.Text.Length > 0)
+                {
+                    MailAddressCollection toAddresses = Functions.FromMailAddressString(SmtpTo.Text);
+                    foreach (MailAddress toAddress in toAddresses)
+                        message.To.Add(toAddress);
+                }
+
+                if (SmtpCC.Text.Length > 0)
+                {
+                    MailAddressCollection ccAddresses = Functions.FromMailAddressString(SmtpCC.Text);
+                    foreach (MailAddress ccAddress in ccAddresses)
+                        message.CC.Add(ccAddress);
+                }
+
+                if (SmtpBcc.Text.Length > 0)
+                {
+                    MailAddressCollection bccAddresses = Functions.FromMailAddressString(SmtpBcc.Text);
+                    foreach (MailAddress bccAddress in bccAddresses)
+                        message.Bcc.Add(bccAddress);
+                }
+
+                message.Subject = SmtpSubject.Text;
+                message.Body = SmtpBody.Text;
+
+                // Process attachments.
+                string[] attachmentLines = SmtpAttachments.Text.Replace("\r", "").Split('\n');
+                foreach (string attachmentLine in attachmentLines)
+                {
+                    if (attachmentLine.Trim().Length > 0)
+                        message.Attachments.Add(new Attachment(attachmentLine.Trim()));
+                }
+
+                message.IsBodyHtml = SmtpIsHtml.Checked;
+                message.SmimeSigningCertificate = signingCertificate;
+                message.SmimeSigned = SmtpSmimeSign.Checked;
+                message.SmimeEncryptedEnvelope = SmtpSmimeEncrypt.Checked;
+                message.SmimeTripleWrapped = SmtpSmimeTripleWrap.Checked;
+
+                await smtpClient.SendMdnAsync(message);
+                MessageBox.Show("Message successfully sent.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("SMTP send exception:\r\n\r\n" + ex.Message, "SMTP send exception", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+        }
         #endregion Event Handlers
 
         #region Private Methods
@@ -1090,5 +1181,7 @@ This is a test of the APPEND command.", new string[] { @"\Seen" }, DateTime.Now)
                 textbox.Text = valueNavigator.Value;
         }
         #endregion Private Methods
+
+        
     }
 }

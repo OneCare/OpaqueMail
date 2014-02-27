@@ -227,6 +227,42 @@ namespace OpaqueMail.Net
 
             return MIMEMessageBytes;
         }
+
+        public async Task<byte[]> MDNMimeEncode(string SmimeBoundaryName)
+        {
+            // Write out body of the message.
+            StringBuilder MIMEBuilder = new StringBuilder(Constants.SMALLSBSIZE);
+
+            MIMEBuilder.Append("Content-Type: multipart/report; report-type=disposition-notification; boundary=\"" + SmimeBoundaryName + "\"\r\n");
+            MIMEBuilder.Append("Content-Transfer-Encoding: 7bit\r\n\r\n");
+            MIMEBuilder.Append("This is a multi-part report in MIME format.\r\n\r\n");
+
+            MIMEBuilder.Append("--" + SmimeBoundaryName + "\r\n");
+            MIMEBuilder.Append("Message was received. \r\n");
+           
+            MIMEBuilder.Append("--" + SmimeBoundaryName + "--\r\n");
+
+            MIMEBuilder.Append("Content-Type: message/disposition-notification \r\n\r\n");
+
+            MIMEBuilder.Append("Reporting-UA. \r\n");
+            MIMEBuilder.Append("Original-Recipient. \r\n");
+            MIMEBuilder.Append("Final-Recipient. \r\n");
+            MIMEBuilder.Append("Original-Message-Id \r\n");
+            MIMEBuilder.Append("Disposition. \r\n");
+
+            MIMEBuilder.Append("--" + SmimeBoundaryName + "--\r\n\r\n");
+
+            // Determine the body encoding, defaulting to UTF-8.
+            Encoding bodyEncoding = BodyEncoding != null ? BodyEncoding : new UTF8Encoding();
+            Encoder bodyEncoder = bodyEncoding.GetEncoder();
+
+            // Encode and return the message.
+            char[] chars = MIMEBuilder.ToString().ToCharArray();
+            byte[] MIMEMessageBytes = new byte[bodyEncoder.GetByteCount(chars, 0, chars.Length, false)];
+            int byteCount = bodyEncoder.GetBytes(chars, 0, chars.Length, MIMEMessageBytes, 0, true);
+
+            return MIMEMessageBytes;
+        }
         #endregion Public Methods
     }
 }

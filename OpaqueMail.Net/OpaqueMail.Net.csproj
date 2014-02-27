@@ -63,10 +63,13 @@
     <Compile Include="TnefEncoding.cs" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="user1cert.p12" />
+    <Folder Include="lib\" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="lib\" />
+    <EmbeddedResource Include="foocert.p12" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="user2cert.p12" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

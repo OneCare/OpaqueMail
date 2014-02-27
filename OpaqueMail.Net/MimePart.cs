@@ -65,6 +65,9 @@ namespace OpaqueMail.Net
         public X509Certificate2Collection SmimeSigningCertificates = null;
         /// <summary>Whether the MIME part was S/MIME signed, had its envelope encrypted, and was then signed again.</summary>
         public bool SmimeTripleWrapped = false;
+
+        public string SenderDomain { get; set; }
+
         #endregion Public Members
 
         #region Constructors
@@ -127,7 +130,7 @@ namespace OpaqueMail.Net
         /// <param name="contentTransferEncoding">Encoding of the outermost MIME part.</param>
         /// <param name="body">The outermost MIME part's contents.</param>
         /// <param name="processingFlags">Flags determining whether specialized properties are returned with a ReadOnlyMailMessage.</param>
-        public static List<MimePart> ExtractMIMEParts(string contentType, string charSet, string contentTransferEncoding, string body, ReadOnlyMailMessageProcessingFlags processingFlags)
+        public static List<MimePart> ExtractMIMEParts(string contentType, string charSet, string contentTransferEncoding, string body, ReadOnlyMailMessageProcessingFlags processingFlags, string from)
         {
             List<MimePart> mimeParts = new List<MimePart>();
 
@@ -221,7 +224,7 @@ namespace OpaqueMail.Net
                             if (mimeContentTypeToUpper.StartsWith("MULTIPART/"))
                             {
                                 // Recurse through embedded MIME parts.
-                                List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags);
+                                List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags, from);
                                 foreach (MimePart returnedMIMEPart in returnedMIMEParts)
                                     mimeParts.Add(returnedMIMEPart);
                             }
@@ -245,7 +248,7 @@ namespace OpaqueMail.Net
                                     processed = (processingFlags & ReadOnlyMailMessageProcessingFlags.IncludeSmimeEncryptedEnvelopeData) == 0;
 
                                     // Decrypt the MIME part and recurse through embedded MIME parts.
-                                    List<MimePart> returnedMIMEParts = ReturnDecryptedMimeParts(mimeContentType, mimeContentTransferEncoding, mimeBody, processingFlags);
+                                    List<MimePart> returnedMIMEParts = ReturnDecryptedMimeParts(mimeContentType, mimeContentTransferEncoding, mimeBody, processingFlags, from );
                                     if (returnedMIMEParts != null)
                                     {
                                         foreach (MimePart returnedMIMEPart in returnedMIMEParts)
@@ -296,7 +299,7 @@ namespace OpaqueMail.Net
                                             mimeContentTransferEncoding = Functions.ReturnBetween(mimeHeaders, "Content-Transfer-Encoding:", "\r\n").Trim();
                                             mimeCharSet = Functions.ExtractMimeParameter(mimeContentType, "charset");
 
-                                            List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags);
+                                            List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags, from);
                                             foreach (MimePart returnedMIMEPart in returnedMIMEParts)
                                                 mimeParts.Add(returnedMIMEPart);
                                         }
@@ -339,7 +342,7 @@ namespace OpaqueMail.Net
                 {
                     // Verify the signature and track the signing certificates.
                     X509Certificate2Collection signingCertificates;
-                    if (VerifySignature(mimeBlocks[signatureBlock], mimeBlocks[1 - signatureBlock], out signingCertificates))
+                    if (VerifySignature(mimeBlocks[signatureBlock], mimeBlocks[1 - signatureBlock], from, out signingCertificates))
                     {
                         // Stamp each MIME part found so far as signed, and if relevant, triple wrapped.
                         foreach (MimePart mimePart in mimeParts)
@@ -379,7 +382,7 @@ namespace OpaqueMail.Net
                         mimeParts.Add(new MimePart("smime.p7m", contentType, "", "", "", body));
 
                     // Decrypt the MIME part and recurse through embedded MIME parts.
-                    List<MimePart> returnedMIMEParts = ReturnDecryptedMimeParts(contentType, contentTransferEncoding, body, processingFlags);
+                    List<MimePart> returnedMIMEParts = ReturnDecryptedMimeParts(contentType, contentTransferEncoding, body, processingFlags, from);
                     if (returnedMIMEParts != null)
                     {
                         foreach (MimePart returnedMIMEPart in returnedMIMEParts)
@@ -419,7 +422,7 @@ namespace OpaqueMail.Net
                             string mimeCharSet = "", mimeContentDisposition = "", mimeContentID = "", mimeContentType = "", mimeContentTransferEncoding = "", mimeFileName = "";
                             ExtractMimeHeaders(mimeHeaders, out mimeContentType, out mimeCharSet, out mimeContentTransferEncoding, out mimeContentDisposition, out mimeFileName, out mimeContentID);
 
-                            List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags);
+                            List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags, from);
                             foreach (MimePart returnedMIMEPart in returnedMIMEParts)
                                 mimeParts.Add(returnedMIMEPart);
                         }
@@ -442,7 +445,7 @@ namespace OpaqueMail.Net
                     string mimeContentTransferEncoding = Functions.ReturnBetween(mimeHeaders, "Content-Transfer-Encoding:", "\r\n").Trim();
                     string mimeCharSet = Functions.ExtractMimeParameter(mimeContentType, "charset");
 
-                    List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags);
+                    List<MimePart> returnedMIMEParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, mimeBody, processingFlags, from);
                     foreach (MimePart returnedMIMEPart in returnedMIMEParts)
                         mimeParts.Add(returnedMIMEPart);
                 }
@@ -513,25 +516,33 @@ namespace OpaqueMail.Net
         /// <param name="contentTransferEncoding">Encoding of the outermost MIME part.</param>
         /// <param name="envelopeText">The MIME envelope.</param>
         /// <param name="processingFlags">Flags determining whether specialized properties are returned with a ReadOnlyMailMessage.</param>
-        public static List<MimePart> ReturnDecryptedMimeParts(string contentType, string contentTransferEncoding, string envelopeText, ReadOnlyMailMessageProcessingFlags processingFlags)
+        public static List<MimePart> ReturnDecryptedMimeParts(string contentType, string contentTransferEncoding, string envelopeText, ReadOnlyMailMessageProcessingFlags processingFlags, string from)
         {
             try
             {
 
-                X509Certificate2 certificate;
+                X509Certificate2 certificate1;
+                X509Certificate2 certificate2;
 
                
-                using (var certificateStream = GetEmbeddedResourceStream("user1cert.p12"))
+                using (var certificateStream = GetEmbeddedResourceStream("user2cert.p12"))
                 using (var memoryStream = new MemoryStream())
                 {
                     certificateStream.CopyTo(memoryStream);
-                    certificate = new X509Certificate2(memoryStream.ToArray(),
-                        "ikonne", X509KeyStorageFlags.Exportable);
+                    certificate1 = new X509Certificate2(memoryStream.ToArray(),
+                        "ikonne");
                 }
-                
-                
 
-                var certificate2Collection = new X509Certificate2Collection(certificate);
+                using (var certificateStream = GetEmbeddedResourceStream("foocert.p12"))
+                using (var memoryStream = new MemoryStream())
+                {
+                    certificateStream.CopyTo(memoryStream);
+                    certificate2 = new X509Certificate2(memoryStream.ToArray(),
+                        "foobarbaz");
+                }
+
+                var certificate2Collection = new X509Certificate2Collection(certificate1);
+                certificate2Collection.Add(certificate2);
                 // Hydrate the envelope CMS object.
                 EnvelopedCms envelope = new EnvelopedCms();
 
@@ -549,7 +560,7 @@ namespace OpaqueMail.Net
                 ExtractMimeHeaders(mimeHeaders, out mimeContentType, out mimeCharSet, out mimeContentTransferEncoding, out mimeContentDisposition, out mimeFileName, out mimeContentID);
 
                 // Recurse through embedded MIME parts.
-                List<MimePart> mimeParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, body, processingFlags);
+                List<MimePart> mimeParts = ExtractMIMEParts(mimeContentType, mimeCharSet, mimeContentTransferEncoding, body, processingFlags, from);
                 foreach (MimePart mimePart in mimeParts)
                     mimePart.SmimeEncryptedEnvelope = true;
 
@@ -558,8 +569,8 @@ namespace OpaqueMail.Net
             catch (Exception ex)
             {
                 // If unable to decrypt the body, return null.
-                return null;
-                //throw ex;
+                
+                throw ex;
             }
         }
 
@@ -569,14 +580,19 @@ namespace OpaqueMail.Net
         /// <param name="signatureBlock">The S/MIME signature block.</param>
         /// <param name="body">The message's raw body.</param>
         /// <param name="signingCertificates">Collection of certificates to be used when signing.</param>
-        public static bool VerifySignature(string signatureBlock, string body, out X509Certificate2Collection signingCertificates)
+        public static bool VerifySignature(string signatureBlock, string body, string from, out X509Certificate2Collection signingCertificates)
         {
             // Ignore MIME headers for the signature block;
             signatureBlock = signatureBlock.Substring(signatureBlock.IndexOf("\r\n\r\n") + 4);
 
             // Hydrate the signature CMS object.
-            //stripping out the leading \r\n as it causes verify signature to fail.
-            ContentInfo contentInfo = new ContentInfo(Encoding.UTF8.GetBytes(body.Substring(2)));
+            
+            int bodyOffset = 0;
+            while (body.Substring(bodyOffset).StartsWith("\r\n"))
+                  bodyOffset += 2;
+
+
+            ContentInfo contentInfo = new ContentInfo(Encoding.UTF8.GetBytes(body.Substring(bodyOffset)));
             SignedCms signedCms = new SignedCms(contentInfo, true);
 
 
@@ -598,7 +614,11 @@ namespace OpaqueMail.Net
             const QType qType = QType.CERT;
             const QClass qClass = QClass.IN;
 
-            var response = resolver.Query("direct.sitenv.org", qType, qClass);
+            
+
+            var domain = from.Substring(from.IndexOf("@") +1);
+
+            var response = resolver.Query(domain, qType, qClass);
 
 
 

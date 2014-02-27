@@ -134,6 +134,97 @@ namespace OpaqueMail.Net
                 await SmimeSendAsync(message);
         }
 
+        public async Task SendMdnAsync(MailMessage message)
+        {
+            await SmimeSendMdnAsync(message);
+        }
+
+        private async Task SmimeSendMdnAsync(MailMessage message)
+        {
+            // Require one or more recipients.
+            if (message.To.Count + message.CC.Count + message.Bcc.Count < 1)
+                throw new SmtpException("One or more recipients must be specified via the '.To', '.CC', or '.Bcc' collections.");
+
+            // Require a signing certificate to be specified.
+            if ((message.SmimeSigned || message.SmimeTripleWrapped) && message.SmimeSigningCertificate == null)
+                throw new SmtpException("A signing certificate must be passed prior to signing.");
+
+            // Ensure the rendering engine expects MIME encoding.
+            message.Headers["MIME-Version"] = "1.0";
+
+            // OpaqueMail optional setting for protecting the subject.
+            // Note: This is not part of the current RFC specifcation and should only be used when sending to other OpaqueMail agents.
+            if ((message.SmimeEncryptedEnvelope || message.SmimeTripleWrapped) && (message.SmimeEncryptionOptionFlags & (SmimeEncryptionOptionFlags.EncryptSubject)) > 0)
+            {
+                message.Headers["X-Subject-Encryption"] = "true";
+                message.Body = "Subject: " + message.Subject + "\r\n" + message.Body;
+                message.Subject = Guid.NewGuid().ToString();
+            }
+
+            // Generate a multipart/mixed message containing the e-mail's body, alternate views, and attachments.
+            byte[] MIMEMessageBytes = await message.MDNMimeEncode(SmimeBoundaryName);
+            message.Headers["Content-Type"] = "multipart/report; boundary=\"" + SmimeBoundaryName + "\"";
+            message.Headers["Content-Transfer-Encoding"] = "7bit";
+
+            // Skip the MIME header.
+            message.Body = Encoding.UTF8.GetString(MIMEMessageBytes);
+            message.Body = message.Body.Substring(message.Body.IndexOf("\r\n\r\n") + 4);
+
+            // Handle S/MIME signing.
+            bool successfullySigned = false;
+            if (message.SmimeSigned || message.SmimeTripleWrapped)
+            {
+                int unsignedSize = MIMEMessageBytes.Length;
+                MIMEMessageBytes = SmimeSign(buffer, MIMEMessageBytes, message, false);
+                successfullySigned = MIMEMessageBytes.Length != unsignedSize;
+
+                if (successfullySigned)
+                {
+                    // Remove any prior content dispositions.
+                    if (message.Headers["Content-Disposition"] != null)
+                        message.Headers.Remove("Content-Disposition");
+
+                    message.Headers["Content-Type"] = "multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=sha1;\r\n\tboundary=\"" + SmimeSignedCmsBoundaryName + "\"";
+                    message.Headers["Content-Transfer-Encoding"] = "7bit";
+                    message.Body = Encoding.UTF8.GetString(MIMEMessageBytes);
+                }
+            }
+
+            // Handle S/MIME envelope encryption.
+            bool successfullyEncrypted = false;
+            if (message.SmimeEncryptedEnvelope || message.SmimeTripleWrapped)
+            {
+                int unencryptedSize = MIMEMessageBytes.Length;
+                MIMEMessageBytes = SmimeEncryptEnvelope(MIMEMessageBytes, message, successfullySigned);
+                successfullyEncrypted = MIMEMessageBytes.Length != unencryptedSize;
+
+                // If the message won't be triple-wrapped, wrap the encrypted message with MIME.
+                if (successfullyEncrypted && (!successfullySigned || !message.SmimeTripleWrapped))
+                {
+                    message.Headers["Content-Type"] = "application/pkcs7-mime; name=smime.p7m;\r\n\tsmime-type=enveloped-data";
+                    message.Headers["Content-Transfer-Encoding"] = "base64";
+
+                    message.Body = Functions.ToBase64String(MIMEMessageBytes) + "\r\n";
+                }
+            }
+
+            // Handle S/MIME triple wrapping (i.e. signing, envelope encryption, then signing again).
+            if (successfullyEncrypted)
+            {
+                if (message.SmimeTripleWrapped)
+                {
+                    message.Headers["Content-Type"] = "multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=sha1;\r\n\tboundary=\"" + SmimeTripleSignedCmsBoundaryName + "\"";
+                    message.Headers["Content-Transfer-Encoding"] = "7bit";
+
+                    message.Body = Encoding.UTF8.GetString(SmimeSign(buffer, MIMEMessageBytes, message, true));
+                }
+                else
+                    message.Headers["Content-Disposition"] = "attachment; filename=smime.p7m";
+            }
+
+            await SmimeSendRawAsync(message);
+        }
+
         /// <summary>
         /// Check whether all recipients on the message have valid public keys and will be able to receive S/MIME encrypted envelopes.
         /// </summary>
@@ -594,6 +685,9 @@ namespace OpaqueMail.Net
 
             await SmimeSendRawAsync(message);
         }
+
+
+
 
         /// <summary>
         /// Create a byte array containing a signed S/MIME message.
