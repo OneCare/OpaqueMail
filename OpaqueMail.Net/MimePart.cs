@@ -521,28 +521,19 @@ namespace OpaqueMail.Net
             try
             {
 
-                X509Certificate2 certificate1;
-                X509Certificate2 certificate2;
-
-               
-                using (var certificateStream = GetEmbeddedResourceStream("user2cert.p12"))
+                X509Certificate2 certificate;
+                
+                using (var certificateStream = GetEmbeddedResourceStream("onecaredirect_com.p12"))
                 using (var memoryStream = new MemoryStream())
                 {
                     certificateStream.CopyTo(memoryStream);
-                    certificate1 = new X509Certificate2(memoryStream.ToArray(),
-                        "ikonne");
+                    certificate = new X509Certificate2(memoryStream.ToArray(),
+                        "onecare");
                 }
 
-                using (var certificateStream = GetEmbeddedResourceStream("foocert.p12"))
-                using (var memoryStream = new MemoryStream())
-                {
-                    certificateStream.CopyTo(memoryStream);
-                    certificate2 = new X509Certificate2(memoryStream.ToArray(),
-                        "foobarbaz");
-                }
 
-                var certificate2Collection = new X509Certificate2Collection(certificate1);
-                certificate2Collection.Add(certificate2);
+                var certificate2Collection = new X509Certificate2Collection(certificate);
+                
                 // Hydrate the envelope CMS object.
                 EnvelopedCms envelope = new EnvelopedCms();
 
@@ -595,55 +586,33 @@ namespace OpaqueMail.Net
             ContentInfo contentInfo = new ContentInfo(Encoding.UTF8.GetBytes(body.Substring(bodyOffset)));
             SignedCms signedCms = new SignedCms(contentInfo, true);
 
-
-            X509Certificate2 certificate;
-
-            var resolver = new Resolver();
-            resolver.Recursion = true;
-            resolver.UseCache = true;
-            resolver.DnsServer = "8.8.8.8"; // Google Public DNS
-
-            resolver.TimeOut = 1000;
-            resolver.Retries = 3;
-            resolver.TransportType = Heijden.DNS.TransportType.Tcp;
-
-
-
-
-
-            const QType qType = QType.CERT;
-            const QClass qClass = QClass.IN;
-
-            
-
-            var domain = from.Substring(from.IndexOf("@") +1);
-
-            var response = resolver.Query(domain, qType, qClass);
-
-
-
-            certificate = new X509Certificate2(response.RecordsCERT[0].RAWKEY);
-
-            var certificate2Collection = new X509Certificate2Collection(certificate);
-
             try
             {
                 // Attempt to decode the signature block and verify the passed in signature.
                 signedCms.Decode(Convert.FromBase64String(signatureBlock));
-                signedCms.CheckSignature(certificate2Collection, true);
-
-                
-                //signedCms.CheckSignature(true);
                 signingCertificates = signedCms.Certificates;
+
+                X509Chain ch = new X509Chain();
+                foreach (X509Certificate2 cert in signingCertificates)
+                       ch.ChainPolicy.ExtraStore.Add(cert);
+                var passedValidation = ch.Build(signingCertificates[0]);
+
+                signedCms.CheckSignature(true);
+
+                //don't do any validation?
+
+                //if (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length == 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown))
+                //    throw(new Exception());
+
                 
                 return true;
             }
             catch (Exception ex)
             {
-                
+                throw ex;
                 // If an exception occured, the signature could not be verified.
-                signingCertificates = null;
-                return false;
+                //signingCertificates = null;
+                //return false;
             }
         }
 

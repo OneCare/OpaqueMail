@@ -66,10 +66,7 @@
     <Folder Include="lib\" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="foocert.p12" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="user2cert.p12" />
+    <EmbeddedResource Include="onecaredirect_com.p12" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

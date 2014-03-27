@@ -27,6 +27,7 @@ using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
+using Heijden.DNS;
 
 namespace OpaqueMail.Net
 {
@@ -195,7 +196,7 @@ namespace OpaqueMail.Net
             if (message.SmimeEncryptedEnvelope || message.SmimeTripleWrapped)
             {
                 int unencryptedSize = MIMEMessageBytes.Length;
-                MIMEMessageBytes = SmimeEncryptEnvelope(MIMEMessageBytes, message, successfullySigned);
+                MIMEMessageBytes = SmimeEncryptEnvelopeForMDN(MIMEMessageBytes, message, successfullySigned);
                 successfullyEncrypted = MIMEMessageBytes.Length != unencryptedSize;
 
                 // If the message won't be triple-wrapped, wrap the encrypted message with MIME.
@@ -315,6 +316,9 @@ namespace OpaqueMail.Net
                     store.Close();
                 }
 
+                
+
+
                 // Loop through certificates and check for matching recipients.
                 foreach (X509Certificate2 cert in SmimeValidCertificates)
                 {
@@ -338,6 +342,8 @@ namespace OpaqueMail.Net
                     // Verify the certificate chain.
                     if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireCertificateVerification) > 0)
                     {
+                        X509Chain chain = new X509Chain();
+                        chain.Build(cert);
                         if (!cert.Verify())
                             continue;
                     }
@@ -384,6 +390,166 @@ namespace OpaqueMail.Net
                     SmimeCertificateCache.Add(canonicalCertSubject, cert);
                     addressesWithPublicKeys.Add(canonicalCertSubject);
                     addressesNeedingPublicKeys.Remove(canonicalCertSubject);
+
+                    // Shortcut to abort processing of additional certificates if all recipients are accounted for.
+                    if (addressesNeedingPublicKeys.Count < 1)
+                        break;
+                }
+            }
+        }
+
+        private void ResolvePublicKeysForMDN(MailMessage message, out HashSet<string> addressesWithPublicKeys, out Dictionary<string, MailAddress> addressesNeedingPublicKeys)
+        {
+            // Initialize collections for all recipients.
+            addressesWithPublicKeys = new HashSet<string>();
+            addressesNeedingPublicKeys = new Dictionary<string, MailAddress>();
+
+           
+
+            var emailAddress = message.To.ElementAt(0).Address.ToUpper();
+
+            if (SmimeCertificateCache.ContainsKey(emailAddress))
+                addressesWithPublicKeys.Add(emailAddress);
+            else
+                addressesNeedingPublicKeys.Add(emailAddress,message.To.ElementAt(0));
+
+            // If any addresses haven't been mapped to public keys, map them.
+            if (addressesNeedingPublicKeys.Count > 0)
+            {
+
+                SmimeValidCertificates = new X509Certificate2Collection();
+
+                var resolver = new Resolver();
+                resolver.Recursion = true;
+                resolver.UseCache = true;
+                resolver.DnsServer = "8.8.8.8"; // Google Public DNS
+
+                resolver.TimeOut = 1000;
+                resolver.Retries = 3;
+                resolver.TransportType = Heijden.DNS.TransportType.Tcp;
+
+                const QType qType = QType.CERT;
+                const QClass qClass = QClass.IN;
+
+               
+
+                var directEmailAddress = emailAddress.Replace("@", ".");
+                var directDomain = "";
+
+                var response = resolver.Query(directEmailAddress, qType, qClass);
+
+                if (response.Answers.Count == 0)
+                {
+                    directDomain = emailAddress.Substring(emailAddress.IndexOf("@") + 1);
+
+                    response = resolver.Query(directDomain, qType, qClass);
+                }
+
+                if (response.Answers.Count != 0 && response.RecordsCERT[0].RAWKEY != null)
+                    SmimeValidCertificates.Add(new X509Certificate2(response.RecordsCERT[0].RAWKEY));
+                else
+                    return;
+
+                
+                // Loop through certificates and check for matching recipients.
+                foreach (X509Certificate2 cert in SmimeValidCertificates)
+                {
+                    var subjectAltName = "";
+                    
+                   
+
+                     foreach (X509Extension ext in cert.Extensions)
+                     {
+                        if (ext.Oid.Value.Equals(/* SAN OID */"2.5.29.17"))
+                        {
+                            var asnData = new AsnEncodedData(ext.Oid,ext.RawData);
+                            subjectAltName = asnData.Format(false);
+                            break;
+                        }
+                     }
+
+                    if (String.IsNullOrEmpty(subjectAltName))
+                        return;
+
+                    if (subjectAltName.Contains("rfc822")  || subjectAltName.Contains("RFC822") )
+                    {
+                        if (!subjectAltName.Contains(emailAddress.ToLower()))
+                            return;
+                    }
+
+                    if (subjectAltName.Contains("DNS") || subjectAltName.Contains("dns"))
+                    {
+                        if (!subjectAltName.Contains(directDomain.ToLower()) )
+                            return;
+                    }
+
+                    
+                    if (cert.SubjectName.Name.Contains("E="))
+                    {
+                        if ((!cert.SubjectName.Name.Contains(emailAddress.ToLower()) && !cert.SubjectName.Name.Contains(directDomain.ToLower())) )
+                            return;
+                    }
+
+                        
+
+                    // Verify the certificate chain.
+                    if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireCertificateVerification) > 0)
+                    {
+
+
+                        X509Chain ch = new X509Chain();
+                        ch.ChainPolicy.ExtraStore.Add(cert);
+                        ch.Build(cert);
+
+                        //don't do any validation at this time.
+                        //if (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length== 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown ))
+
+                        //if (!cert.Verify())
+                            //continue;
+                    }
+
+                    // Ensure valid key usage scenarios.
+                    if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireKeyUsageOfDataEncipherment) > 0 || (message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireEnhancedKeyUsageofSecureEmail) > 0)
+                    {
+                        bool keyDataEncipherment = false, enhancedKeySecureEmail = false;
+                        foreach (X509Extension extension in cert.Extensions)
+                        {
+                            if (!keyDataEncipherment && extension.Oid.FriendlyName == "Key Usage")
+                            {
+                                X509KeyUsageExtension ext = (X509KeyUsageExtension)extension;
+                                if ((ext.KeyUsages & X509KeyUsageFlags.DataEncipherment) != X509KeyUsageFlags.None)
+                                {
+                                    keyDataEncipherment = true;
+
+                                    if (!((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireEnhancedKeyUsageofSecureEmail) > 0))
+                                        break;
+                                }
+                            }
+                            if (!enhancedKeySecureEmail && extension.Oid.FriendlyName == "Enhanced Key Usage")
+                            {
+                                X509EnhancedKeyUsageExtension ext = (X509EnhancedKeyUsageExtension)extension;
+                                OidCollection oids = ext.EnhancedKeyUsages;
+                                foreach (Oid oid in oids)
+                                {
+                                    if (oid.FriendlyName == "Secure Email")
+                                    {
+                                        enhancedKeySecureEmail = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireKeyUsageOfDataEncipherment) > 0 && !keyDataEncipherment)
+                            continue;
+                        if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireEnhancedKeyUsageofSecureEmail) > 0 && !enhancedKeySecureEmail)
+                            continue;
+                    }
+
+                    // If we've made it this far, we can use the certificate for a recipient.
+                    //MailAddress originalAddress = addressesNeedingPublicKeys[canonicalCertSubject];
+                    SmimeCertificateCache.Add(emailAddress, cert);
+                    addressesWithPublicKeys.Add(emailAddress);
+                    addressesNeedingPublicKeys.Remove(emailAddress);
 
                     // Shortcut to abort processing of additional certificates if all recipients are accounted for.
                     if (addressesNeedingPublicKeys.Count < 1)
@@ -450,6 +616,20 @@ namespace OpaqueMail.Net
                 response = await reader.ReadLineAsync();
                 if (!response.StartsWith("2"))
                     throw new SmtpException("Unable to authenticate with server '" + Host + "'.  Received '" + response + "'.");
+            }
+            else
+            {
+                await writer.WriteLineAsync("AUTH LOGIN");
+                response = await reader.ReadLineAsync();
+                if (!response.StartsWith("3"))
+                    throw new SmtpException("Unable to authenticate with server '" + Host + "'.  Received '" + response + "'.");
+                await writer.WriteLineAsync(Functions.ToBase64String("postmaster@onecaredirect.com"));
+                response = await reader.ReadLineAsync();
+                await writer.WriteLineAsync(Functions.ToBase64String("7tewts2leip6"));
+                response = await reader.ReadLineAsync();
+                if (!response.StartsWith("2"))
+                    throw new SmtpException("Unable to authenticate with server '" + Host + "'.  Received '" + response + "'.");
+
             }
 
             // Build our raw headers block.
@@ -547,6 +727,61 @@ namespace OpaqueMail.Net
             Dictionary<string, MailAddress> addressesNeedingPublicKeys;
             HashSet<string> addressesWithPublicKeys;
             ResolvePublicKeys(message, out addressesWithPublicKeys, out addressesNeedingPublicKeys);
+
+            // Throw an error if we're unable to encrypt the message for one or more recipients and encryption is explicitly required.
+            if (addressesNeedingPublicKeys.Count > 0)
+            {
+                // If the implementation requires S/MIME encryption (the default), throw an error if there's no certificate.
+                if ((message.SmimeSettingsMode & SmimeSettingsMode.RequireExactSettings) > 0)
+                {
+                    StringBuilder exceptionMessage = new StringBuilder(Constants.TINYSBSIZE);
+                    exceptionMessage.Append("Trying to send encrypted message to one or more recipients without a trusted public key.\r\nRecipients without public keys: ");
+                    foreach (string addressNeedingPublicKey in addressesNeedingPublicKeys.Keys)
+                        exceptionMessage.Append(addressNeedingPublicKey + ", ");
+                    exceptionMessage.Remove(exceptionMessage.Length - 2, 2);
+
+                    throw new SmtpException(exceptionMessage.ToString());
+                }
+                else
+                    return contentBytes;
+            }
+
+            if (alreadySigned)
+            {
+                // If already signed, prepend S/MIME headers.
+                StringBuilder contentBuilder = new StringBuilder(Constants.TINYSBSIZE);
+                contentBuilder.Append("Content-Type: multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=sha1;\r\n\tboundary=\"" + SmimeSignedCmsBoundaryName + "\"\r\n");
+                contentBuilder.Append("Content-Transfer-Encoding: 7bit\r\n\r\n");
+
+                contentBytes = Encoding.UTF8.GetBytes(contentBuilder.ToString() + Encoding.UTF8.GetString(contentBytes));
+            }
+
+            // Prepare the encryption envelope.
+            ContentInfo contentInfo = new ContentInfo(contentBytes);
+            EnvelopedCms envelope;
+
+            // If a specific algorithm is specified, choose that.  Otherwise, negotiate which algorithm to use.
+            if (SmimeAlgorithmIdentifier != null)
+                envelope = new EnvelopedCms(contentInfo, SmimeAlgorithmIdentifier);
+            else
+                envelope = new EnvelopedCms(contentInfo);
+
+            // Encrypt the symmetric session key using each recipient's public key.
+            foreach (string addressWithPublicKey in addressesWithPublicKeys)
+            {
+                CmsRecipient recipient = new CmsRecipient(SmimeCertificateCache[addressWithPublicKey]);
+                envelope.Encrypt(recipient);
+            }
+
+            return envelope.Encode();
+        }
+
+        private byte[] SmimeEncryptEnvelopeForMDN(byte[] contentBytes, MailMessage message, bool alreadySigned)
+        {
+            // Resolve recipient public keys.
+            Dictionary<string, MailAddress> addressesNeedingPublicKeys;
+            HashSet<string> addressesWithPublicKeys;
+            ResolvePublicKeysForMDN(message, out addressesWithPublicKeys, out addressesNeedingPublicKeys);
 
             // Throw an error if we're unable to encrypt the message for one or more recipients and encryption is explicitly required.
             if (addressesNeedingPublicKeys.Count > 0)
@@ -728,7 +963,7 @@ namespace OpaqueMail.Net
             SignedCms signedCms = new SignedCms(contentInfo, true);
 
             CmsSigner signer = new CmsSigner(SubjectIdentifierType.IssuerAndSerialNumber, message.SmimeSigningCertificate);
-            signer.IncludeOption = X509IncludeOption.WholeChain;
+            signer.IncludeOption = X509IncludeOption.EndCertOnly;
 
             // Sign the current time.
             if ((message.SmimeSigningOptionFlags & SmimeSigningOptionFlags.SignTime) > 0)
