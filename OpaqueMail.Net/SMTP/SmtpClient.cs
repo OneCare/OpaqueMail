@@ -496,16 +496,16 @@ namespace OpaqueMail.Net
                     if ((message.SmimeEncryptionOptionFlags & SmimeEncryptionOptionFlags.RequireCertificateVerification) > 0)
                     {
 
-
+                        
                         X509Chain ch = new X509Chain();
                         ch.ChainPolicy.ExtraStore.Add(cert);
-                        ch.Build(cert);
+                        var passedValidation = ch.Build(cert);
 
-                        //don't do any validation at this time.
-                        //if (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length== 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown ))
 
-                        //if (!cert.Verify())
-                            //continue;
+                        if (!passedValidation && (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length == 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown)))
+                            throw new Exception(ch.ChainStatus.FirstOrDefault().StatusInformation);
+
+
                     }
 
                     // Ensure valid key usage scenarios.

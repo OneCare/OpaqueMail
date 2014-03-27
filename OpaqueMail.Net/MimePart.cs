@@ -595,14 +595,14 @@ namespace OpaqueMail.Net
                 X509Chain ch = new X509Chain();
                 foreach (X509Certificate2 cert in signingCertificates)
                        ch.ChainPolicy.ExtraStore.Add(cert);
-                var passedValidation = ch.Build(signingCertificates[0]);
 
                 signedCms.CheckSignature(true);
+                
+                var passedValidation = ch.Build(signingCertificates[0]);
+                       
 
-                //don't do any validation?
-
-                //if (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length == 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown))
-                //    throw(new Exception());
+                if (!passedValidation && (ch.ChainElements.Count > 2 || ch.ChainStatus.Length > 1 || (ch.ChainStatus.Length == 1 && ch.ChainStatus[0].Status != X509ChainStatusFlags.RevocationStatusUnknown)))
+                    throw new Exception(ch.ChainStatus.FirstOrDefault().StatusInformation);
 
                 
                 return true;
