@@ -91,6 +91,10 @@ namespace OpaqueMail.Net
         public SmimeSigningOptionFlags SmimeSigningOptionFlags = SmimeSigningOptionFlags.SignTime;
         /// <summary>Triple-wrap the e-mail by signing, then encrypting the envelope, then signing the encrypted envelope.</summary>
         public bool SmimeTripleWrapped = false;
+
+        public string MessageDispositionNotificationType { get; set; }
+
+        public string MessageId { get; set; }
         #endregion Public Members
 
         #region Private Members
@@ -230,6 +234,11 @@ namespace OpaqueMail.Net
 
         public async Task<byte[]> MDNMimeEncode(string SmimeBoundaryName)
         {
+
+            var msg_id = MessageId == null ? "" : MessageId;
+
+
+
             // Write out body of the message.
             StringBuilder MIMEBuilder = new StringBuilder(Constants.SMALLSBSIZE);
 
@@ -240,15 +249,17 @@ namespace OpaqueMail.Net
             MIMEBuilder.Append("--" + SmimeBoundaryName + "\r\n");
             MIMEBuilder.Append("Message was received. \r\n");
            
-            MIMEBuilder.Append("--" + SmimeBoundaryName + "--\r\n");
+            MIMEBuilder.Append("--" + SmimeBoundaryName + "\r\n");
 
             MIMEBuilder.Append("Content-Type: message/disposition-notification \r\n\r\n");
 
-            MIMEBuilder.Append("Reporting-UA. \r\n");
-            MIMEBuilder.Append("Original-Recipient. \r\n");
-            MIMEBuilder.Append("Final-Recipient. \r\n");
-            MIMEBuilder.Append("Original-Message-Id \r\n");
-            MIMEBuilder.Append("Disposition. \r\n");
+            MIMEBuilder.Append("Reporting-UA: onecare.me; OneCare \r\n");
+            MIMEBuilder.Append("Original-Recipient: rfc822;" +  this.To.FirstOrDefault().Address +   "\r\n");
+            MIMEBuilder.Append("Final-Recipient: rfc822;" + this.To.FirstOrDefault().Address +  "\r\n");
+            MIMEBuilder.Append("Original-Message-Id: " + msg_id + "\r\n");
+            MIMEBuilder.Append("Disposition: automatic-action/MDN-sent-automatically;" + MessageDispositionNotificationType + "\r\n");
+            if (MessageDispositionNotificationType == "dispatched")
+                MIMEBuilder.Append("X-DIRECT-FINAL-DESTINATION-DELIVERY:" + MessageDispositionNotificationType + "\r\n");
 
             MIMEBuilder.Append("--" + SmimeBoundaryName + "--\r\n\r\n");
 

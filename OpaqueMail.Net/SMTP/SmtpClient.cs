@@ -162,6 +162,9 @@ namespace OpaqueMail.Net
                 message.Subject = Guid.NewGuid().ToString();
             }
 
+            
+                
+
             // Generate a multipart/mixed message containing the e-mail's body, alternate views, and attachments.
             byte[] MIMEMessageBytes = await message.MDNMimeEncode(SmimeBoundaryName);
             message.Headers["Content-Type"] = "multipart/report; boundary=\"" + SmimeBoundaryName + "\"";
@@ -419,44 +422,19 @@ namespace OpaqueMail.Net
 
                 SmimeValidCertificates = new X509Certificate2Collection();
 
-                var resolver = new Resolver();
-                resolver.Recursion = true;
-                resolver.UseCache = true;
-                resolver.DnsServer = "8.8.8.8"; // Google Public DNS
+                var certResolver = new PublicKeyResolver();
 
-                resolver.TimeOut = 1000;
-                resolver.Retries = 3;
-                resolver.TransportType = Heijden.DNS.TransportType.Tcp;
-
-                const QType qType = QType.CERT;
-                const QClass qClass = QClass.IN;
+                SmimeValidCertificates = certResolver.LocatePublicKeyCertificate(emailAddress);
 
                
-
-                var directEmailAddress = emailAddress.Replace("@", ".");
-                var directDomain = "";
-
-                var response = resolver.Query(directEmailAddress, qType, qClass);
-
-                if (response.Answers.Count == 0)
-                {
-                    directDomain = emailAddress.Substring(emailAddress.IndexOf("@") + 1);
-
-                    response = resolver.Query(directDomain, qType, qClass);
-                }
-
-                if (response.Answers.Count != 0 && response.RecordsCERT[0].RAWKEY != null)
-                    SmimeValidCertificates.Add(new X509Certificate2(response.RecordsCERT[0].RAWKEY));
-                else
-                    return;
 
                 
                 // Loop through certificates and check for matching recipients.
                 foreach (X509Certificate2 cert in SmimeValidCertificates)
                 {
                     var subjectAltName = "";
-                    
-                   
+
+                    var directDomain = emailAddress.Substring(emailAddress.IndexOf("@") + 1);
 
                      foreach (X509Extension ext in cert.Extensions)
                      {
@@ -625,7 +603,7 @@ namespace OpaqueMail.Net
                     throw new SmtpException("Unable to authenticate with server '" + Host + "'.  Received '" + response + "'.");
                 await writer.WriteLineAsync(Functions.ToBase64String("postmaster@onecaredirect.com"));
                 response = await reader.ReadLineAsync();
-                await writer.WriteLineAsync(Functions.ToBase64String("7tewts2leip6"));
+                await writer.WriteLineAsync(Functions.ToBase64String("9wbk830ewuh5"));
                 response = await reader.ReadLineAsync();
                 if (!response.StartsWith("2"))
                     throw new SmtpException("Unable to authenticate with server '" + Host + "'.  Received '" + response + "'.");
